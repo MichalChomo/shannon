@@ -1,0 +1,38 @@
+FROM docker/sandbox-templates:codex
+
+USER root
+
+# System deps + your requested tools (including Tailscale)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  curl ca-certificates bzip2 git \
+  bash-completion vim libxcb1 locales \
+  && rm -rf /var/lib/apt/lists/*
+
+# Configure locale
+RUN locale-gen en_US.UTF-8 \
+  && update-locale LANG=en_US.UTF-8
+
+ENV LANG=en_US.UTF-8
+
+# Append your bashrc snippet from a file
+USER root
+COPY bashrc.append /tmp/bashrc.append
+RUN touch /home/agent/.bashrc \
+ && cat /tmp/bashrc.append >> /home/agent/.bashrc \
+ && rm -f /tmp/bashrc.append \
+ && chown agent:agent /home/agent/.bashrc
+
+# Codex config
+RUN mkdir -p /etc/codex
+COPY codex-config.toml /etc/codex/config.toml
+COPY --chown=agent:agent codex-auth.json /home/agent/codex-auth.json
+
+COPY --chown=agent:agent .gitconfig /home/agent/.gitconfig
+
+USER agent
+
+# Copy cpiserver from local machine path via build context rooted at /Users/mchomo:
+#   docker build -f /Users/mchomo/code/shannon/Dockerfile.sandbox -t codex-shannon-sandbox /Users/mchomo
+COPY --chown=agent:agent gari/prediction/cpiserver /home/agent/cpiserver
+
+COPY . /home/agent/shannon

@@ -53,6 +53,7 @@ Options for 'start':
   WORKSPACE=<name>       Named workspace (auto-resumes if exists, creates if new)
   PIPELINE_TESTING=true  Use minimal prompts for fast testing
   ROUTER=true            Route requests through claude-code-router (multi-model support)
+  SHANNON_EXECUTOR=codex Force Codex CLI backend (optional)
 
 Options for 'stop':
   CLEAN=true             Remove all data including volumes
@@ -84,6 +85,7 @@ parse_args() {
       REBUILD=*) REBUILD="${arg#REBUILD=}" ;;
       ROUTER=*) ROUTER="${arg#ROUTER=}" ;;
       WORKSPACE=*) WORKSPACE="${arg#WORKSPACE=}" ;;
+      SHANNON_EXECUTOR=*) SHANNON_EXECUTOR="${arg#SHANNON_EXECUTOR=}" ;;
     esac
   done
 }
@@ -135,6 +137,17 @@ ensure_containers() {
 cmd_start() {
   parse_args "$@"
 
+  # Default Codex runtime paths
+  export CODEX_HOME="${CODEX_HOME:-/tmp/.codex}"
+  export SHANNON_CODEX_AUTH_SOURCE="${SHANNON_CODEX_AUTH_SOURCE:-/app/.codex-host/auth.json}"
+  if [ -z "$CODEX_AUTH_DIR" ]; then
+    CODEX_AUTH_DIR="${HOME}/.codex"
+  fi
+  export CODEX_AUTH_DIR
+  if [ -n "$SHANNON_EXECUTOR" ]; then
+    export SHANNON_EXECUTOR
+  fi
+
   # Validate required vars
   if [ -z "$URL" ] || [ -z "$REPO" ]; then
     echo "ERROR: URL and REPO are required"
@@ -142,7 +155,7 @@ cmd_start() {
     exit 1
   fi
 
-  # Check for API key (Bedrock and router modes can bypass this)
+  # Check for credentials (Bedrock, router, or Codex device auth can bypass Anthropic vars)
   if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
     if [ "$CLAUDE_CODE_USE_BEDROCK" = "1" ]; then
       # Bedrock mode — validate required AWS credentials
@@ -183,11 +196,15 @@ cmd_start() {
     elif [ "$ROUTER" = "true" ] && { [ -n "$OPENAI_API_KEY" ] || [ -n "$OPENROUTER_API_KEY" ]; }; then
       # Router mode with alternative provider - set a placeholder for SDK init
       export ANTHROPIC_API_KEY="router-mode"
+    elif [ -n "$OPENAI_API_KEY" ] || [ -f "$CODEX_AUTH_DIR/auth.json" ]; then
+      # Codex mode (API key or device-auth token persisted in auth.json)
+      export SHANNON_EXECUTOR="${SHANNON_EXECUTOR:-codex}"
     else
-      echo "ERROR: Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in .env"
+      echo "ERROR: Set ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, OPENAI_API_KEY, or Codex auth.json"
       echo "       (or use CLAUDE_CODE_USE_BEDROCK=1 for AWS Bedrock,"
       echo "        CLAUDE_CODE_USE_VERTEX=1 for Google Vertex AI,"
-      echo "        or ROUTER=true with OPENAI_API_KEY or OPENROUTER_API_KEY)"
+      echo "        ROUTER=true with OPENAI_API_KEY or OPENROUTER_API_KEY,"
+      echo "        or run: codex login --device-auth)"
       exit 1
     fi
   fi

@@ -7,6 +7,7 @@
 // Production Claude agent execution with retry, git checkpoints, and audit logging
 
 import { fs, path } from 'zx';
+import { spawn } from 'node:child_process';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import { isRetryableError, PentestError } from '../services/error-handling.js';
@@ -25,6 +26,8 @@ import { createProgressManager } from './progress-manager.js';
 import { createAuditLogger } from './audit-logger.js';
 import { getActualModelName } from './router-utils.js';
 import { resolveModel, type ModelTier } from './models.js';
+import { resolveCodexModel } from './codex-models.js';
+import { getCodexHome, prepareCodexAuth, resolveAiExecutorBackend } from './codex-auth.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
 
 declare global {
@@ -218,6 +221,21 @@ export async function runClaudePrompt(
   );
   const auditLogger = createAuditLogger(auditSession);
 
+  const backend = resolveAiExecutorBackend();
+  if (backend === 'codex') {
+    return runCodexPrompt(
+      fullPrompt,
+      sourceDir,
+      description,
+      modelTier,
+      timer,
+      execContext,
+      progress,
+      auditLogger,
+      logger
+    );
+  }
+
   logger.info(`Running Claude Code: ${description}...`);
 
   // 3. Configure MCP servers
@@ -340,6 +358,207 @@ export async function runClaudePrompt(
   }
 }
 
+async function runCodexPrompt(
+  fullPrompt: string,
+  sourceDir: string,
+  description: string,
+  modelTier: ModelTier,
+  timer: Timer,
+  execContext: ReturnType<typeof detectExecutionContext>,
+  progress: ReturnType<typeof createProgressManager>,
+  auditLogger: ReturnType<typeof createAuditLogger>,
+  logger: ActivityLogger
+): Promise<ClaudePromptResult> {
+  const model = resolveCodexModel(modelTier);
+  const codexHome = getCodexHome();
+  let turnCount = 0;
+  let apiErrorDetected = false;
+  const totalCost = 0;
+
+  logger.info(`Running Codex CLI: ${description}...`);
+  progress.start();
+
+  try {
+    // 1. Ensure CODEX_HOME is writable and auth token is materialized.
+    await fs.mkdir(codexHome, { recursive: true });
+    await prepareCodexAuth(logger);
+
+    // 2. Execute codex in non-interactive mode and capture the final answer.
+    const outputFile = path.join(
+      '/tmp',
+      `codex-last-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`
+    );
+    const codexResult = await executeCodexExec(
+      [
+        'exec',
+        '--json',
+        '--skip-git-repo-check',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--model',
+        model,
+        '--cd',
+        sourceDir,
+        '--output-last-message',
+        outputFile,
+        '-',
+      ],
+      fullPrompt,
+      {
+        ...process.env,
+        CODEX_HOME: codexHome,
+      }
+    );
+
+    turnCount = codexResult.turnCount;
+    apiErrorDetected = codexResult.apiErrorDetected;
+
+    if (codexResult.exitCode !== 0) {
+      const failureMessage = codexResult.lastError || codexResult.stderr || 'Codex CLI execution failed';
+      throw new Error(failureMessage);
+    }
+
+    let result = '';
+    try {
+      result = (await fs.readFile(outputFile, 'utf8')).trim();
+    } finally {
+      await fs.remove(outputFile).catch(() => undefined);
+    }
+
+    if (!result) {
+      throw new Error('Codex CLI finished without a final assistant message');
+    }
+
+    await auditLogger.logLlmResponse(Math.max(turnCount, 1), result);
+
+    // 3. Finalize successful result.
+    const duration = timer.stop();
+    progress.finish(formatCompletionMessage(execContext, description, Math.max(turnCount, 1), duration));
+
+    if (apiErrorDetected) {
+      logger.warn(`API Error detected in ${description} - will validate deliverables before failing`);
+    }
+
+    return {
+      result,
+      success: true,
+      duration,
+      turns: Math.max(turnCount, 1),
+      cost: totalCost,
+      model,
+      partialCost: totalCost,
+      apiErrorDetected,
+    };
+  } catch (error) {
+    // 4. Handle errors — log, write error file, return failure.
+    const duration = timer.stop();
+    const err = error as Error & { code?: string; status?: number };
+
+    await auditLogger.logError(err, duration, turnCount);
+    progress.stop();
+    outputLines(formatErrorOutput(err, execContext, description, duration, sourceDir, isRetryableError(err)));
+    await writeErrorLog(err, sourceDir, fullPrompt, duration);
+
+    return {
+      error: err.message,
+      errorType: err.constructor.name,
+      prompt: fullPrompt.slice(0, 100) + '...',
+      success: false,
+      duration,
+      cost: totalCost,
+      retryable: isRetryableError(err),
+    };
+  }
+}
+
+async function executeCodexExec(
+  args: string[],
+  prompt: string,
+  env: NodeJS.ProcessEnv
+): Promise<CodexExecResult> {
+  return new Promise((resolve) => {
+    const child = spawn('codex', args, {
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stderr = '';
+    let stdoutBuffer = '';
+    let turnCount = 0;
+    let apiErrorDetected = false;
+    let lastError: string | null = null;
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString();
+
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? '';
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line || !line.startsWith('{')) {
+          continue;
+        }
+
+        try {
+          const event = JSON.parse(line) as {
+            type?: string;
+            message?: string;
+            error?: { message?: string };
+            item?: { type?: string; message?: string };
+          };
+
+          if (event.type === 'turn.completed') {
+            turnCount++;
+          }
+
+          if (event.type === 'error') {
+            apiErrorDetected = true;
+            lastError = event.message ?? lastError;
+          }
+
+          if (event.type === 'item.completed' && event.item?.type === 'error') {
+            apiErrorDetected = true;
+            lastError = event.item.message ?? lastError;
+          }
+
+          if (event.type === 'turn.failed') {
+            apiErrorDetected = true;
+            lastError = event.error?.message ?? lastError;
+          }
+        } catch {
+          // Ignore malformed lines in Codex JSONL stream.
+        }
+      }
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      resolve({
+        exitCode: 1,
+        stderr: error.message,
+        turnCount,
+        apiErrorDetected: true,
+        lastError: error.message,
+      });
+    });
+
+    child.on('close', (code) => {
+      resolve({
+        exitCode: code ?? 1,
+        stderr: stderr.trim(),
+        turnCount,
+        apiErrorDetected,
+        lastError,
+      });
+    });
+
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+
 
 interface MessageLoopResult {
   turnCount: number;
@@ -347,6 +566,14 @@ interface MessageLoopResult {
   apiErrorDetected: boolean;
   cost: number;
   model?: string | undefined;
+}
+
+interface CodexExecResult {
+  exitCode: number;
+  stderr: string;
+  turnCount: number;
+  apiErrorDetected: boolean;
+  lastError: string | null;
 }
 
 interface MessageLoopDeps {

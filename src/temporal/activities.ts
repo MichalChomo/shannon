@@ -254,7 +254,7 @@ export async function runReportAgent(input: ActivityInput): Promise<AgentMetrics
  * Runs cheap checks before any agent execution:
  * 1. Repository path exists with .git
  * 2. Config file validates (if provided)
- * 3. Credential validation (API key, OAuth, or router mode)
+ * 3. Credential validation (Claude API/OAuth, Codex API/device auth, or router mode)
  *
  * NOT using runAgentActivity — preflight doesn't run an agent via the SDK.
  */

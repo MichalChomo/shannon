@@ -14,10 +14,11 @@
  * Checks run sequentially, cheapest first:
  * 1. Repository path exists and contains .git
  * 2. Config file parses and validates (if provided)
- * 3. Credentials validate via Claude Agent SDK query (API key, OAuth, Bedrock, Vertex AI, or router mode)
+ * 3. Credentials validate via configured AI backend (Claude SDK, Codex CLI, Bedrock, Vertex, or router mode)
  */
 
 import fs from 'fs/promises';
+import { spawn } from 'node:child_process';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKAssistantMessageError } from '@anthropic-ai/claude-agent-sdk';
 import { PentestError, isRetryableError } from './error-handling.js';
@@ -25,6 +26,8 @@ import { ErrorCode } from '../types/errors.js';
 import { type Result, ok, err } from '../types/result.js';
 import { parseConfig } from '../config-parser.js';
 import { resolveModel } from '../ai/models.js';
+import { resolveCodexModel } from '../ai/codex-models.js';
+import { hasCodexCredentialsConfigured, prepareCodexAuth } from '../ai/codex-auth.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
 
 // === Repository Validation ===
@@ -231,10 +234,13 @@ async function validateCredentials(
   }
 
   // 4. Check that at least one credential is present
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+  const hasClaudeCredential = Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
+  const hasCodexCredential = hasCodexCredentialsConfigured();
+
+  if (!hasClaudeCredential && !hasCodexCredential) {
     return err(
       new PentestError(
-        'No API credentials found. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in .env (or use CLAUDE_CODE_USE_BEDROCK=1 for AWS Bedrock, or CLAUDE_CODE_USE_VERTEX=1 for Google Vertex AI)',
+        'No API credentials found. Set ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, OPENAI_API_KEY, or provide Codex auth.json (or use CLAUDE_CODE_USE_BEDROCK=1 for AWS Bedrock, or CLAUDE_CODE_USE_VERTEX=1 for Google Vertex AI).',
         'config',
         false,
         {},
@@ -243,38 +249,112 @@ async function validateCredentials(
     );
   }
 
-  // 5. Validate via SDK query
-  const authType = process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'OAuth token' : 'API key';
-  logger.info(`Validating ${authType} via SDK...`);
+  // 5. Validate Anthropic credentials via SDK query when present
+  if (hasClaudeCredential) {
+    const authType = process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'OAuth token' : 'API key';
+    logger.info(`Validating ${authType} via SDK...`);
 
-  try {
-    for await (const message of query({ prompt: 'hi', options: { model: resolveModel('small'), maxTurns: 1 } })) {
-      if (message.type === 'assistant' && message.error) {
-        return classifySdkError(message.error, authType);
+    try {
+      for await (const message of query({ prompt: 'hi', options: { model: resolveModel('small'), maxTurns: 1 } })) {
+        if (message.type === 'assistant' && message.error) {
+          return classifySdkError(message.error, authType);
+        }
+        if (message.type === 'result') {
+          break;
+        }
       }
-      if (message.type === 'result') {
-        break;
-      }
+
+      logger.info(`${authType} OK`);
+      return ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const retryable = isRetryableError(error instanceof Error ? error : new Error(message));
+
+      return err(
+        new PentestError(
+          retryable
+            ? `Failed to reach Anthropic API. Check your network connection.`
+            : `${authType} validation failed: ${message}`,
+          retryable ? 'network' : 'config',
+          retryable,
+          { authType },
+          retryable ? undefined : ErrorCode.AUTH_FAILED
+        )
+      );
     }
-
-    logger.info(`${authType} OK`);
-    return ok(undefined);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const retryable = isRetryableError(error instanceof Error ? error : new Error(message));
-
-    return err(
-      new PentestError(
-        retryable
-          ? `Failed to reach Anthropic API. Check your network connection.`
-          : `${authType} validation failed: ${message}`,
-        retryable ? 'network' : 'config',
-        retryable,
-        { authType },
-        retryable ? undefined : ErrorCode.AUTH_FAILED
-      )
-    );
   }
+
+  // 6. Validate Codex CLI credentials
+  return validateCodexCredentials(logger);
+}
+
+async function validateCodexCredentials(
+  logger: ActivityLogger
+): Promise<Result<void, PentestError>> {
+  logger.info('Validating Codex CLI credentials...');
+  await prepareCodexAuth(logger);
+
+  const validationPrompt = 'Reply with exactly: OK';
+  const model = resolveCodexModel('small');
+  const codexHome = process.env.CODEX_HOME || '/tmp/.codex';
+
+  const result = await new Promise<{ code: number; stderr: string }>((resolve) => {
+    const child = spawn(
+      'codex',
+      [
+        'exec',
+        '--skip-git-repo-check',
+        '--sandbox',
+        'read-only',
+        '--model',
+        model,
+        '-',
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          CODEX_HOME: codexHome,
+        },
+        stdio: ['pipe', 'ignore', 'pipe'],
+      }
+    );
+
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      resolve({ code: 1, stderr: error.message });
+    });
+
+    child.on('close', (code) => {
+      resolve({ code: code ?? 1, stderr });
+    });
+
+    child.stdin.write(validationPrompt);
+    child.stdin.end();
+  });
+
+  if (result.code === 0) {
+    logger.info('Codex CLI credentials OK');
+    return ok(undefined);
+  }
+
+  const errorMessage = result.stderr.trim() || 'Codex CLI credential validation failed';
+  const retryable = isRetryableError(new Error(errorMessage));
+  return err(
+    new PentestError(
+      retryable
+        ? 'Failed to reach Codex API. Check network connectivity and try again.'
+        : `Codex credential validation failed: ${errorMessage}`,
+      retryable ? 'network' : 'config',
+      retryable,
+      {},
+      retryable ? undefined : ErrorCode.AUTH_FAILED
+    )
+  );
 }
 
 // === Preflight Orchestrator ===
@@ -307,7 +387,7 @@ export async function runPreflightChecks(
     }
   }
 
-  // 3. Credential check (cheap — 1 SDK round-trip)
+  // 3. Credential check (cheap — one minimal backend validation call)
   const credResult = await validateCredentials(logger);
   if (!credResult.ok) {
     return credResult;

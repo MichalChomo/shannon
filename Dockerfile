@@ -127,15 +127,16 @@ RUN cd mcp-server && npm run build && cd .. && npm run build
 RUN npm prune --production && \
     cd mcp-server && npm prune --production
 
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
 # Create directories for session data and ensure proper permissions
 RUN mkdir -p /app/sessions /app/deliverables /app/repos /app/configs && \
-    mkdir -p /tmp/.cache /tmp/.config /tmp/.npm && \
+    mkdir -p /tmp/.cache /tmp/.config /tmp/.npm /tmp/.codex && \
     chmod 777 /app && \
     chmod 777 /tmp/.cache && \
     chmod 777 /tmp/.config && \
     chmod 777 /tmp/.npm && \
+    chmod 777 /tmp/.codex && \
     chown -R pentest:pentest /app
 
 # Switch to non-root user
@@ -149,6 +150,7 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 ENV npm_config_cache=/tmp/.npm
 ENV HOME=/tmp
+ENV CODEX_HOME=/tmp/.codex
 ENV XDG_CACHE_HOME=/tmp/.cache
 ENV XDG_CONFIG_HOME=/tmp/.config
 

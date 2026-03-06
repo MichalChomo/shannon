@@ -123,6 +123,7 @@ Shannon Pro supports a self-hosted runner model (similar to GitHub Actions self-
   - [Usage Examples](#usage-examples)
   - [Workspaces and Resuming](#workspaces-and-resuming)
   - [Configuration (Optional)](#configuration-optional)
+  - [Codex CLI (OpenAI)](#codex-cli-openai)
   - [AWS Bedrock](#aws-bedrock)
   - [Google Vertex AI](#google-vertex-ai)
   - [[EXPERIMENTAL - UNSUPPORTED] Router Mode (Alternative Providers)](#experimental---unsupported-router-mode-alternative-providers)
@@ -146,6 +147,7 @@ Shannon Pro supports a self-hosted runner model (similar to GitHub Actions self-
 - **AI Provider Credentials** (choose one):
   - **Anthropic API key** (recommended) - Get from [Anthropic Console](https://console.anthropic.com)
   - **Claude Code OAuth token**
+  - **Codex CLI device auth** (`codex login --device-auth`) or `OPENAI_API_KEY`
   - **AWS Bedrock** - Route through Amazon Bedrock with AWS credentials (see [AWS Bedrock](#aws-bedrock))
   - **Google Vertex AI** - Route through Google Cloud Vertex AI (see [Google Vertex AI](#google-vertex-ai))
   - **[EXPERIMENTAL - UNSUPPORTED] Alternative providers via Router Mode** - OpenAI or Google Gemini via OpenRouter (see [Router Mode](#experimental---unsupported-router-mode-alternative-providers))
@@ -163,10 +165,17 @@ cd shannon
 export ANTHROPIC_API_KEY="your-api-key"              # or CLAUDE_CODE_OAUTH_TOKEN
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000           # recommended
 
+# Option A2: Codex CLI device auth
+codex login --device-auth
+export SHANNON_EXECUTOR=codex                        # optional (auto-detected)
+export CODEX_AUTH_DIR="$HOME/.codex"                 # optional (default)
+
 # Option B: Create a .env file
 cat > .env << 'EOF'
 ANTHROPIC_API_KEY=your-api-key
 CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
+# SHANNON_EXECUTOR=codex
+# CODEX_AUTH_DIR=/absolute/path/to/.codex
 EOF
 
 # 3. Run a pentest
@@ -388,6 +397,38 @@ pipeline:
 ```
 
 `max_concurrent_pipelines` controls how many vulnerability pipelines run simultaneously (1-5, default: 5). Lower values reduce the chance of hitting rate limits but increase wall-clock time.
+
+### Codex CLI (OpenAI)
+
+Shannon can run agents through Codex CLI using either a device-auth session (`codex login --device-auth`) or `OPENAI_API_KEY`.
+
+#### Quick Setup
+
+1. Authenticate Codex on the host:
+
+```bash
+codex login --device-auth
+```
+
+2. Add Codex runtime settings to `.env`:
+
+```bash
+SHANNON_EXECUTOR=codex
+CODEX_AUTH_DIR=/absolute/path/to/.codex   # optional, defaults to ~/.codex
+
+# Optional model tier overrides
+CODEX_SMALL_MODEL=gpt-5-mini
+CODEX_MEDIUM_MODEL=gpt-5
+CODEX_LARGE_MODEL=gpt-5
+```
+
+3. Run Shannon:
+
+```bash
+./shannon start URL=https://example.com REPO=repo-name
+```
+
+The worker mounts `CODEX_AUTH_DIR` read-only, copies `auth.json` into container-local `CODEX_HOME`, and runs agents in non-interactive Codex exec mode.
 
 ### AWS Bedrock
 

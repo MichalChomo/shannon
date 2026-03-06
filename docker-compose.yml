@@ -34,6 +34,13 @@ services:
       - ANTHROPIC_SMALL_MODEL=${ANTHROPIC_SMALL_MODEL:-}
       - ANTHROPIC_MEDIUM_MODEL=${ANTHROPIC_MEDIUM_MODEL:-}
       - ANTHROPIC_LARGE_MODEL=${ANTHROPIC_LARGE_MODEL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - SHANNON_EXECUTOR=${SHANNON_EXECUTOR:-}
+      - CODEX_HOME=${CODEX_HOME:-/tmp/.codex}
+      - SHANNON_CODEX_AUTH_SOURCE=${SHANNON_CODEX_AUTH_SOURCE:-/app/.codex-host/auth.json}
+      - CODEX_SMALL_MODEL=${CODEX_SMALL_MODEL:-}
+      - CODEX_MEDIUM_MODEL=${CODEX_MEDIUM_MODEL:-}
+      - CODEX_LARGE_MODEL=${CODEX_LARGE_MODEL:-}
       - CLAUDE_CODE_MAX_OUTPUT_TOKENS=${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-64000}
     depends_on:
       temporal:
@@ -45,6 +52,7 @@ services:
       - ${OUTPUT_DIR:-./audit-logs}:/app/output
       - ./credentials:/app/credentials:ro
       - ./repos:/repos
+      - ${CODEX_AUTH_DIR:-/tmp/.codex-empty}:/app/.codex-host:ro
       - ${BENCHMARKS_BASE:-.}:/benchmarks
     shm_size: 2gb
     ipc: host

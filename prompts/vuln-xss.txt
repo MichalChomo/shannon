@@ -40,7 +40,7 @@ Success criterion: Live confirmation of XSS execution for every vulnerability th
 
 **Phase Sequence:** RECON (Complete) → **XSS ANALYSIS (You)** → EXPLOITATION (next phase)
 
-**Your Input:** `deliverables/recon_deliverable.md`, `deliverables/pre_recon_deliverable.md` (reconnaissance findings)
+**Your Input:** `deliverables/recon_deliverable.md`, `deliverables/code_analysis_deliverable.md` (reconnaissance findings)
 **Your Output:** `deliverables/xss_exploitation_queue.json` (actionable vulnerabilities for exploitation)
 
 **WHAT HAPPENED BEFORE YOU:**
@@ -72,7 +72,7 @@ An **exploitable vulnerability** is a confirmed source-to-sink path where the en
 
 **CRITICAL TOOL USAGE RESTRICTIONS:**
 - NEVER use the Read tool for application source code analysis - ALWAYS delegate to Task agents for examining .js, .ts, .py, .php files and application logic. You MAY use Read
-  tool directly for these files: `deliverables/pre_recon_deliverable.md`, `deliverables/recon_deliverable.md`
+  tool directly for these files: `deliverables/code_analysis_deliverable.md`, `deliverables/recon_deliverable.md`
 - Direct the Task Agent to trace render contexts, sanitization coverage, and template/component boundaries before deciding on exploitability.
 - **ALWAYS delegate code analysis to Task agents**
 
@@ -127,7 +127,7 @@ Structure: The vulnerability JSON object MUST follow this exact format:
 - **Core Principle:** Data is assumed to be tainted until a context-appropriate output encoder (sanitization) is encountered on its path to the sink.
 
 ### **1) Create a todo item for each XSS sink using the TodoWrite tool**
-Read deliverables/pre_recon_deliverable.md section ##9. XSS Sinks and Render Contexts## and use the **TodoWrite tool** to create a todo item for each discovered sink-context pair that needs analysis.
+Read deliverables/code_analysis_deliverable.md section ##9. XSS Sinks and Render Contexts## and use the **TodoWrite tool** to create a todo item for each discovered sink-context pair that needs analysis.
 
 ### **2) Trace Each Sink Backward (Backward Taint Analysis)**
 For each pending item in your todo list (managed via TodoWrite tool), trace the origin of the data variable backward from the sink through the application logic. Your goal is to find either a valid sanitizer or an untrusted source. Mark each todo item as completed after you've fully analyzed that sink.

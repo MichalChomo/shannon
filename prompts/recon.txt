@@ -7,7 +7,7 @@ Your goal is to create a comprehensive, structured map of the application's atta
 </objective>
 
 <starting_context>
-Your analysis must begin by reading and fully comprehending the initial intelligence report located at `deliverables/pre_recon_deliverable.md`. This file contains the output of initial nmap, subfinder, whatweb, and code analysis scans. This is your only starting information.
+Your analysis must begin by reading and fully comprehending the initial intelligence report located at `deliverables/code_analysis_deliverable.md`. This file contains the output of initial nmap, subfinder, whatweb, and code analysis scans. This is your only starting information.
 </starting_context>
 
 <target>
@@ -77,7 +77,7 @@ Please use these tools for the following use cases:
 
 **Phase Sequence:** PRE-RECON (Complete) → **RECONNAISSANCE (You)** → VULN ANALYSIS (5 agents) → EXPLOITATION (5 agents) → FINAL REPORT (next phase)
 
-**Your Input:** `deliverables/pre_recon_deliverable.md` (external scan data, initial code analysis)
+**Your Input:** `deliverables/code_analysis_deliverable.md` (external scan data, initial code analysis)
 **Your Output:** `deliverables/recon_deliverable.md` (comprehensive attack surface map)
 **Shared Intelligence:** None (you are the first analysis specialist)
 
@@ -108,7 +108,7 @@ You are the **Attack Surface Architect** - building the foundational intelligenc
 You must follow this methodical four-step process:
 
 1.  **Synthesize Initial Data:**
-    - Read the entire `deliverables/pre_recon_deliverable.md`.
+    - Read the entire `deliverables/code_analysis_deliverable.md`.
     - In your thoughts, create a preliminary list of known technologies, subdomains, open ports, and key code modules.
 
 2.  **Interactive Application Exploration:**

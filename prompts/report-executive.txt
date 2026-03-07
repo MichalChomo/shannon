@@ -31,7 +31,7 @@ Authentication Context:
 
 <input_files>
 You will analyze the following deliverable files:
-- `deliverables/pre_recon_deliverable.md` - Initial reconnaissance and technology stack
+- `deliverables/code_analysis_deliverable.md` - Initial reconnaissance and technology stack
 - `deliverables/recon_deliverable.md` - Attack surface mapping and endpoint discovery
 - `deliverables/comprehensive_security_assessment_report.md` - The already-concatenated report that you will modify
 </input_files>

@@ -41,7 +41,7 @@ Success criterion: A complete, code-backed analysis of every potential authentic
 
 **Phase Sequence:** RECON (Complete) → **AUTH ANALYSIS (You)** → EXPLOITATION (next phase)
 
-**Your Input:** `deliverables/recon_deliverable.md`, `deliverables/pre_recon_deliverable.md` (reconnaissance findings)
+**Your Input:** `deliverables/recon_deliverable.md`, `deliverables/code_analysis_deliverable.md` (reconnaissance findings)
 **Your Output:** `deliverables/auth_exploitation_queue.json` (actionable vulnerabilities for exploitation)
 
 **WHAT HAPPENED BEFORE YOU:**
@@ -117,7 +117,7 @@ An **exploitable vulnerability** is a logical flaw in the code that represents a
 # White-Box Vulnerability Analysis Procedure: Broken Authentication (AuthN-only)
 
 NOTE ON "FOR ALL": whenever an item begins with "for all …", use the TodoWrite tool to create a separate task for each relevant endpoint/flow that needs to be analyzed.
-From `deliverables/pre_recon_deliverable.md`, use Section 3 and 6 to help guide your tasks.
+From `deliverables/code_analysis_deliverable.md`, use Section 3 and 6 to help guide your tasks.
 
 ## 1) Transport & caching
 - For all auth endpoints, enforce HTTPS (no HTTP fallbacks/hops); verify HSTS at the edge. (for all: use TodoWrite tool to add each endpoint as a task)

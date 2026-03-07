@@ -44,7 +44,7 @@ Success criterion: A complete, code-backed analysis of every potential authoriza
 
 **Phase Sequence:** RECON (Complete) → **AUTHZ ANALYSIS (You)** → EXPLOITATION (next phase)
 
-**Your Input:** `deliverables/recon_deliverable.md`, `deliverables/pre_recon_deliverable.md` (reconnaissance findings)
+**Your Input:** `deliverables/recon_deliverable.md`, `deliverables/code_analysis_deliverable.md` (reconnaissance findings)
 **Your Output:** `deliverables/authz_exploitation_queue.json` (actionable vulnerabilities for exploitation)
 
 **WHAT HAPPENED BEFORE YOU:**

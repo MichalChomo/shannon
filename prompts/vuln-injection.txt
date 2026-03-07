@@ -33,7 +33,8 @@ Success criterion: Complete source-to-sink traces detailing path, sanitizers, si
 </critical>
 
 <starting_context>
-- Your **single source of truth** for the application's structure is the reconnaissance report located at `deliverables/recon_deliverable.md`. You must derive your list of testable targets from this file.
+- Your **primary source of truth** for the application's structure is the reconnaissance report located at `deliverables/recon_deliverable.md`. You must derive your list of testable targets from this file.
+- Use `deliverables/code_analysis_deliverable.md` as supporting code-intelligence context for source/sink tracing tasks.
 
 </starting_context>
 
@@ -42,7 +43,7 @@ Success criterion: Complete source-to-sink traces detailing path, sanitizers, si
 
 **Phase Sequence:** RECON (Complete) → **INJECTION ANALYSIS (You)** → EXPLOITATION (next phase)
 
-**Your Input:** `deliverables/recon_deliverable.md` (reconnaissance findings)
+**Your Input:** `deliverables/recon_deliverable.md`, `deliverables/code_analysis_deliverable.md` (reconnaissance findings)
 **Your Output:** `deliverables/injection_exploitation_queue.json` (actionable vulnerabilities for exploitation)
 
 **WHAT HAPPENED BEFORE YOU:**
@@ -127,7 +128,7 @@ An **exploitable vulnerability** is a confirmed source-to-sink path where the en
 
   - **Goal:** Prove whether untrusted input can influence the **structure** of a backend command (SQL or Shell) or reach sensitive **slots** without the correct defense. No live exploitation in this phase.
   - **1) Create a To Do for each Injection Source found in the Pre-Recon Deliverable
-		  - inside of deliverables/pre_recon_deliverable.md under the section "7. Injection Sources (Command Injection and SQL Injection)" use the TodoWrite tool to create a task for each discovered Injection Source. 
+		  - inside of deliverables/code_analysis_deliverable.md under the section "7. Injection Sources (Command Injection and SQL Injection)" use the TodoWrite tool to create a task for each discovered Injection Source. 
 		  - Note: All sources are marked as Tainted until they Hit a Santiization that matches the sink context. normalizers (lowercasing, trimming, JSON parse, schema decode) — still **tainted**.
     - **2) Trace Data Flow Paths from Source to Sink**
 		    - For each source, your goal is to identify every unique "Data Flow Path" to a database sink. A path is a distinct route the data takes through the code.

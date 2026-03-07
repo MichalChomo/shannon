@@ -6,7 +6,7 @@
 FROM cgr.dev/chainguard/wolfi-base:latest AS builder
 
 # Install system dependencies available in Wolfi
-RUN apk update && apk add --no-cache \
+RUN apk ${APK_TLS_FLAGS} update && apk ${APK_TLS_FLAGS} add --no-cache \
     # Core build tools
     build-base \
     git \
@@ -29,6 +29,7 @@ RUN apk update && apk add --no-cache \
     # Additional utilities
     bash
 
+
 # Set environment variables for Go
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
@@ -38,24 +39,51 @@ ENV CGO_ENABLED=1
 RUN mkdir -p $GOPATH/bin
 
 # Install Go-based security tools
-RUN go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+RUN go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest || \
+    echo "WARNING: subfinder install failed; continuing without subfinder."
+
+# Ensure subfinder binary exists for later COPY even if install failed.
+RUN if [ ! -x /go/bin/subfinder ]; then \
+      echo '#!/bin/sh' > /go/bin/subfinder && \
+      echo 'echo "subfinder unavailable in this image"' >> /go/bin/subfinder && \
+      chmod +x /go/bin/subfinder; \
+    fi
+
 # Install WhatWeb from GitHub (Ruby-based tool)
-RUN git clone --depth 1 https://github.com/urbanadventurer/WhatWeb.git /opt/whatweb && \
-    chmod +x /opt/whatweb/whatweb && \
-    gem install addressable && \
+RUN if git clone --depth 1 https://github.com/urbanadventurer/WhatWeb.git /opt/whatweb; then \
+      chmod +x /opt/whatweb/whatweb && \
+      gem install addressable || true; \
+    else \
+      echo "WARNING: WhatWeb clone failed; continuing without WhatWeb source." && \
+      mkdir -p /opt/whatweb; \
+    fi && \
     echo '#!/bin/bash' > /usr/local/bin/whatweb && \
-    echo 'cd /opt/whatweb && exec ./whatweb "$@"' >> /usr/local/bin/whatweb && \
+    echo 'if [ -x /opt/whatweb/whatweb ]; then cd /opt/whatweb && exec ./whatweb "$@"; else echo "WhatWeb unavailable in this image"; fi' >> /usr/local/bin/whatweb && \
     chmod +x /usr/local/bin/whatweb
 
 # Install Python-based tools
-RUN pip3 install --no-cache-dir schemathesis
+RUN if [ "$SHANNON_SANDBOX_INSECURE_TLS" = "true" ]; then \
+      pip3 install --no-cache-dir \
+        --trusted-host pypi.org \
+        --trusted-host files.pythonhosted.org \
+        schemathesis || true; \
+    else \
+      pip3 install --no-cache-dir schemathesis || true; \
+    fi
+
+# Ensure schemathesis binary exists for later COPY even if install failed.
+RUN if [ ! -x /usr/bin/schemathesis ]; then \
+      echo '#!/bin/sh' > /usr/bin/schemathesis && \
+      echo 'echo "schemathesis unavailable in this image"' >> /usr/bin/schemathesis && \
+      chmod +x /usr/bin/schemathesis; \
+    fi
 
 # Runtime stage - Minimal production image
 FROM cgr.dev/chainguard/wolfi-base:latest AS runtime
 
 # Install only runtime dependencies
 USER root
-RUN apk update && apk add --no-cache \
+RUN apk ${APK_TLS_FLAGS} update && apk ${APK_TLS_FLAGS} add --no-cache \
     # Core utilities
     git \
     bash \
@@ -95,7 +123,7 @@ COPY --from=builder /opt/whatweb /opt/whatweb
 COPY --from=builder /usr/local/bin/whatweb /usr/local/bin/whatweb
 
 # Install WhatWeb Ruby dependencies in runtime stage
-RUN gem install addressable
+RUN gem install addressable || true
 
 # Copy Python packages from builder
 COPY --from=builder /usr/lib/python3.*/site-packages /usr/lib/python3.12/site-packages

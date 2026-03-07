@@ -36,7 +36,7 @@ services:
       - ANTHROPIC_LARGE_MODEL=${ANTHROPIC_LARGE_MODEL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - SHANNON_EXECUTOR=${SHANNON_EXECUTOR:-}
-      - CODEX_HOME=${CODEX_HOME:-/tmp/.codex}
+      - CODEX_HOME=./.codex
       - SHANNON_CODEX_AUTH_SOURCE=${SHANNON_CODEX_AUTH_SOURCE:-/app/.codex-host/auth.json}
       - CODEX_SMALL_MODEL=${CODEX_SMALL_MODEL:-}
       - CODEX_MEDIUM_MODEL=${CODEX_MEDIUM_MODEL:-}
@@ -52,7 +52,7 @@ services:
       - ${OUTPUT_DIR:-./audit-logs}:/app/output
       - ./credentials:/app/credentials:ro
       - ./repos:/repos
-      - ${CODEX_AUTH_DIR:-/tmp/.codex-empty}:/app/.codex-host:ro
+      - ./.codex:/app/.codex-host:ro
       - ${BENCHMARKS_BASE:-.}:/benchmarks
     shm_size: 2gb
     ipc: host

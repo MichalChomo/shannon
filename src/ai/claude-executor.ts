@@ -8,6 +8,7 @@
 
 import { fs, path } from 'zx';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import { isRetryableError, PentestError } from '../services/error-handling.js';
@@ -57,6 +58,56 @@ interface StdioMcpServer {
 }
 
 type McpServer = ReturnType<typeof createShannonHelperServer> | StdioMcpServer;
+interface CodexMcpServer {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
+function buildPlaywrightMcpServer(playwrightMcpName: string): StdioMcpServer {
+  const userDataDir = `/tmp/${playwrightMcpName}`;
+  const isDocker = process.env.SHANNON_DOCKER === 'true';
+
+  const mcpArgs: string[] = [
+    '@playwright/mcp@latest',
+    '--isolated',
+    '--user-data-dir', userDataDir,
+  ];
+
+  if (isDocker) {
+    mcpArgs.push('--executable-path', '/usr/bin/chromium-browser');
+    mcpArgs.push('--browser', 'chromium');
+  }
+
+  const envVars: Record<string, string> = Object.fromEntries(
+    Object.entries({
+      ...process.env,
+      PLAYWRIGHT_HEADLESS: 'true',
+      ...(isDocker && { PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1' }),
+    }).filter((entry): entry is [string, string] => entry[1] !== undefined)
+  );
+
+  return {
+    type: 'stdio',
+    command: 'npx',
+    args: mcpArgs,
+    env: envVars,
+  };
+}
+
+function resolvePlaywrightMcpName(agentName: string | null, logger: ActivityLogger): string | null {
+  if (!agentName) {
+    return null;
+  }
+
+  const promptTemplate = AGENTS[agentName as AgentName].promptTemplate;
+  const playwrightMcpName = MCP_AGENT_MAPPING[promptTemplate as keyof typeof MCP_AGENT_MAPPING] || null;
+  if (playwrightMcpName) {
+    logger.info(`Assigned ${agentName} -> ${playwrightMcpName}`);
+  }
+
+  return playwrightMcpName;
+}
 
 // Configures MCP servers for agent execution, with Docker-specific Chromium handling
 function buildMcpServers(
@@ -72,48 +123,73 @@ function buildMcpServers(
   };
 
   // 2. Look up the agent's Playwright MCP mapping
-  if (agentName) {
-    const promptTemplate = AGENTS[agentName as AgentName].promptTemplate;
-    const playwrightMcpName = MCP_AGENT_MAPPING[promptTemplate as keyof typeof MCP_AGENT_MAPPING] || null;
-
-    if (playwrightMcpName) {
-      logger.info(`Assigned ${agentName} -> ${playwrightMcpName}`);
-
-      const userDataDir = `/tmp/${playwrightMcpName}`;
-
-      // 3. Configure Playwright MCP args with Docker/local browser handling
-      const isDocker = process.env.SHANNON_DOCKER === 'true';
-
-      const mcpArgs: string[] = [
-        '@playwright/mcp@latest',
-        '--isolated',
-        '--user-data-dir', userDataDir,
-      ];
-
-      if (isDocker) {
-        mcpArgs.push('--executable-path', '/usr/bin/chromium-browser');
-        mcpArgs.push('--browser', 'chromium');
-      }
-
-      const envVars: Record<string, string> = Object.fromEntries(
-        Object.entries({
-          ...process.env,
-          PLAYWRIGHT_HEADLESS: 'true',
-          ...(isDocker && { PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1' }),
-        }).filter((entry): entry is [string, string] => entry[1] !== undefined)
-      );
-
-      mcpServers[playwrightMcpName] = {
-        type: 'stdio' as const,
-        command: 'npx',
-        args: mcpArgs,
-        env: envVars,
-      };
-    }
+  const playwrightMcpName = resolvePlaywrightMcpName(agentName, logger);
+  if (playwrightMcpName) {
+    mcpServers[playwrightMcpName] = buildPlaywrightMcpServer(playwrightMcpName);
   }
 
   // 4. Return configured servers
   return mcpServers;
+}
+
+function buildCodexMcpServers(sourceDir: string, agentName: string | null, logger: ActivityLogger): Record<string, CodexMcpServer> {
+  const executorDir = path.dirname(fileURLToPath(import.meta.url));
+  const helperServerPath = path.resolve(executorDir, '../../mcp-server/dist/codex-stdio-server.js');
+  const mcpServers: Record<string, CodexMcpServer> = {
+    'shannon-helper': {
+      command: 'node',
+      args: [helperServerPath, '--target-dir', sourceDir],
+    },
+  };
+
+  const playwrightMcpName = resolvePlaywrightMcpName(agentName, logger);
+  if (!playwrightMcpName) {
+    return mcpServers;
+  }
+
+  const playwrightServer = buildPlaywrightMcpServer(playwrightMcpName);
+  const isDocker = process.env.SHANNON_DOCKER === 'true';
+  mcpServers[playwrightMcpName] = {
+    command: playwrightServer.command,
+    args: playwrightServer.args,
+    env: {
+      PLAYWRIGHT_HEADLESS: 'true',
+      ...(isDocker && { PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1' }),
+    },
+  };
+
+  return mcpServers;
+}
+
+function escapeTomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function toTomlStringArray(values: readonly string[]): string {
+  return `[${values.map(escapeTomlString).join(',')}]`;
+}
+
+function formatTomlKey(key: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : escapeTomlString(key);
+}
+
+function buildCodexMcpConfigArgs(mcpServers: Record<string, CodexMcpServer>): string[] {
+  const args: string[] = [];
+
+  for (const [serverName, server] of Object.entries(mcpServers)) {
+    const serverPrefix = `mcp_servers.${formatTomlKey(serverName)}`;
+    args.push('-c', `${serverPrefix}.enabled=true`);
+    args.push('-c', `${serverPrefix}.command=${escapeTomlString(server.command)}`);
+    args.push('-c', `${serverPrefix}.args=${toTomlStringArray(server.args)}`);
+
+    if (server.env) {
+      for (const [envName, envValue] of Object.entries(server.env)) {
+        args.push('-c', `${serverPrefix}.env.${formatTomlKey(envName)}=${escapeTomlString(envValue)}`);
+      }
+    }
+  }
+
+  return args;
 }
 
 function outputLines(lines: string[]): void {
@@ -227,6 +303,7 @@ export async function runClaudePrompt(
       fullPrompt,
       sourceDir,
       description,
+      agentName,
       modelTier,
       timer,
       execContext,
@@ -362,6 +439,7 @@ async function runCodexPrompt(
   fullPrompt: string,
   sourceDir: string,
   description: string,
+  agentName: string | null,
   modelTier: ModelTier,
   timer: Timer,
   execContext: ReturnType<typeof detectExecutionContext>,
@@ -383,7 +461,19 @@ async function runCodexPrompt(
     await fs.mkdir(codexHome, { recursive: true });
     await prepareCodexAuth(logger);
 
-    // 2. Execute codex in non-interactive mode and capture the final answer.
+    // 2. Configure Codex MCP servers to match Claude wiring.
+    const codexMcpServers = buildCodexMcpServers(sourceDir, agentName, logger);
+    const helperServerPath = codexMcpServers['shannon-helper']?.args[0];
+    if (!helperServerPath || !(await fs.pathExists(helperServerPath))) {
+      throw new Error(
+        `Codex MCP helper not found at ${helperServerPath ?? '<unknown>'}. Build mcp-server before running Codex mode.`
+      );
+    }
+
+    const codexMcpConfigArgs = buildCodexMcpConfigArgs(codexMcpServers);
+    logger.info(`Codex MCP: ${Object.keys(codexMcpServers).join(', ')}`);
+
+    // 3. Execute codex in non-interactive mode and capture the final answer.
     const outputFile = path.join(
       '/tmp',
       `codex-last-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`
@@ -398,6 +488,7 @@ async function runCodexPrompt(
         model,
         '--cd',
         sourceDir,
+        ...codexMcpConfigArgs,
         '--output-last-message',
         outputFile,
         '-',
@@ -430,7 +521,7 @@ async function runCodexPrompt(
 
     await auditLogger.logLlmResponse(Math.max(turnCount, 1), result);
 
-    // 3. Finalize successful result.
+    // 4. Finalize successful result.
     const duration = timer.stop();
     progress.finish(formatCompletionMessage(execContext, description, Math.max(turnCount, 1), duration));
 
@@ -449,7 +540,7 @@ async function runCodexPrompt(
       apiErrorDetected,
     };
   } catch (error) {
-    // 4. Handle errors — log, write error file, return failure.
+    // 5. Handle errors — log, write error file, return failure.
     const duration = timer.stop();
     const err = error as Error & { code?: string; status?: number };
 

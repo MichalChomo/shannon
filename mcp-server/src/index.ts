@@ -7,8 +7,8 @@
 /**
  * Shannon Helper MCP Server
  *
- * In-process MCP server providing save_deliverable and generate_totp tools
- * for Shannon penetration testing agents.
+ * In-process MCP server providing save_deliverable, generate_totp, and
+ * todo/task orchestration tools for Shannon penetration testing agents.
  *
  * Replaces bash script invocations with native tool access.
  *
@@ -19,6 +19,7 @@
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { createSaveDeliverableTool } from './tools/save-deliverable.js';
 import { generateTotpTool } from './tools/generate-totp.js';
+import { createTodoOrchestrationTools } from './tools/todo-orchestrator.js';
 
 /**
  * Create Shannon Helper MCP Server with target directory context
@@ -30,17 +31,19 @@ import { generateTotpTool } from './tools/generate-totp.js';
 export function createShannonHelperServer(targetDir: string): ReturnType<typeof createSdkMcpServer> {
   // Create save_deliverable tool with targetDir in closure (no global variable)
   const saveDeliverableTool = createSaveDeliverableTool(targetDir);
+  const todoTools = createTodoOrchestrationTools();
 
   return createSdkMcpServer({
     name: 'shannon-helper',
     version: '1.0.0',
-    tools: [saveDeliverableTool, generateTotpTool],
+    tools: [saveDeliverableTool, generateTotpTool, ...todoTools.tools],
   });
 }
 
 // Export factory for direct usage if needed
 export { createSaveDeliverableTool } from './tools/save-deliverable.js';
 export { generateTotpTool } from './tools/generate-totp.js';
+export { createTodoOrchestrationTools } from './tools/todo-orchestrator.js';
 
 // Export types for external use
 export * from './types/index.js';

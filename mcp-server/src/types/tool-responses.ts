@@ -40,11 +40,65 @@ export interface GenerateTotpResponse {
   expiresIn: number; // seconds until expiration
 }
 
+export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+export type TodoPriority = 'high' | 'medium' | 'low';
+
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: TodoStatus;
+  priority: TodoPriority;
+  createdAt: string;
+  updatedAt: string;
+  notes?: string;
+}
+
+export interface TodoSummary {
+  total: number;
+  pending: number;
+  inProgress: number;
+  completed: number;
+}
+
+export interface TodoWriteResponse {
+  status: 'success';
+  message: string;
+  revision: number;
+  summary: TodoSummary;
+  todos: TodoItem[];
+  nextTodo: TodoItem | null;
+}
+
+export interface TodoReadResponse {
+  status: 'success';
+  message: string;
+  revision: number;
+  summary: TodoSummary;
+  todos: TodoItem[];
+}
+
+export interface TodoNextResponse {
+  status: 'success';
+  message: string;
+  revision: number;
+  todo: TodoItem | null;
+}
+
+export interface TodoResetResponse {
+  status: 'success';
+  message: string;
+  revision: number;
+}
+
 export type ToolResponse =
   | ErrorResponse
   | SuccessResponse
   | SaveDeliverableResponse
-  | GenerateTotpResponse;
+  | GenerateTotpResponse
+  | TodoWriteResponse
+  | TodoReadResponse
+  | TodoNextResponse
+  | TodoResetResponse;
 
 export interface ToolResultContent {
   type: string;

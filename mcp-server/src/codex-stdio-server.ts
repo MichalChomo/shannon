@@ -8,8 +8,8 @@
  * Shannon Helper MCP stdio server for Codex CLI integration.
  *
  * Claude SDK can consume in-process MCP servers directly. Codex CLI expects
- * external MCP stdio servers, so this bridge exposes the same Shannon helper
- * tools over JSON-RPC on stdio.
+ * external MCP stdio servers, so this bridge exposes Shannon helper tools
+ * over JSON-RPC on stdio (deliverables, TOTP, and todo orchestration).
  */
 
 import path from 'node:path';
@@ -17,6 +17,13 @@ import path from 'node:path';
 import { DeliverableType } from './types/deliverables.js';
 import { GenerateTotpInputSchema, generateTotp } from './tools/generate-totp.js';
 import { SaveDeliverableInputSchema, createSaveDeliverableHandler } from './tools/save-deliverable.js';
+import {
+  TodoNextInputSchema,
+  TodoReadInputSchema,
+  TodoResetInputSchema,
+  TodoWriteInputSchema,
+  createTodoOrchestrationHandlers,
+} from './tools/todo-orchestrator.js';
 import { createToolResult, type ToolResult } from './types/tool-responses.js';
 import { createValidationError } from './utils/error-formatter.js';
 
@@ -78,6 +85,87 @@ const GENERATE_TOTP_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
+const TODO_STATUS_VALUES = ['pending', 'in_progress', 'completed'];
+const TODO_PRIORITY_VALUES = ['high', 'medium', 'low'];
+
+const TODO_ITEM_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+      minLength: 1,
+    },
+    content: {
+      type: 'string',
+      minLength: 1,
+      description: 'Task description',
+    },
+    status: {
+      type: 'string',
+      enum: TODO_STATUS_VALUES,
+      description: 'Task status',
+    },
+    priority: {
+      type: 'string',
+      enum: TODO_PRIORITY_VALUES,
+      description: 'Task priority',
+    },
+    notes: {
+      type: 'string',
+      minLength: 1,
+      description: 'Optional implementation notes',
+    },
+  },
+  required: ['content', 'status'],
+  additionalProperties: false,
+};
+
+const TODO_WRITE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    todos: {
+      type: 'array',
+      minItems: 1,
+      items: TODO_ITEM_SCHEMA,
+      description: 'Full todo list state to persist for this run',
+    },
+  },
+  required: ['todos'],
+  additionalProperties: false,
+};
+
+const TODO_READ_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    status: {
+      type: 'string',
+      enum: TODO_STATUS_VALUES,
+      description: 'Optional status filter',
+    },
+    include_completed: {
+      type: 'boolean',
+      description: 'Set false to omit completed tasks when no status filter is used',
+    },
+  },
+  additionalProperties: false,
+};
+
+const TODO_NEXT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    mark_in_progress: {
+      type: 'boolean',
+      description: 'If true, convert selected pending task to in_progress',
+    },
+  },
+  additionalProperties: false,
+};
+
+const TODO_RESET_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+};
+
 const TOOLS: McpToolDefinition[] = [
   {
     name: 'save_deliverable',
@@ -88,6 +176,26 @@ const TOOLS: McpToolDefinition[] = [
     name: 'generate_totp',
     description: 'Generates 6-digit TOTP code for authentication.',
     inputSchema: GENERATE_TOTP_SCHEMA,
+  },
+  {
+    name: 'todo_write',
+    description: 'Replace the current todo/task list state (TodoWrite equivalent for Codex CLI).',
+    inputSchema: TODO_WRITE_SCHEMA,
+  },
+  {
+    name: 'todo_read',
+    description: 'Read current todo/task list state.',
+    inputSchema: TODO_READ_SCHEMA,
+  },
+  {
+    name: 'todo_next',
+    description: 'Get the next task to execute (in_progress first, then highest-priority pending).',
+    inputSchema: TODO_NEXT_SCHEMA,
+  },
+  {
+    name: 'todo_reset',
+    description: 'Clear all todo/task state for this run.',
+    inputSchema: TODO_RESET_SCHEMA,
   },
 ];
 
@@ -195,7 +303,8 @@ function resolveTargetDir(argv: string[]): string {
 async function handleToolCall(
   name: string,
   args: Record<string, unknown> | undefined,
-  saveDeliverable: ReturnType<typeof createSaveDeliverableHandler>
+  saveDeliverable: ReturnType<typeof createSaveDeliverableHandler>,
+  todoHandlers: ReturnType<typeof createTodoOrchestrationHandlers>
 ): Promise<ToolResult> {
   if (name === 'save_deliverable') {
     const parsed = SaveDeliverableInputSchema.safeParse(args ?? {});
@@ -213,13 +322,46 @@ async function handleToolCall(
     return generateTotp(parsed.data);
   }
 
+  if (name === 'todo_write') {
+    const parsed = TodoWriteInputSchema.safeParse(args ?? {});
+    if (!parsed.success) {
+      return createToolResult(createValidationError(parsed.error.message, true));
+    }
+    return todoHandlers.todoWrite(parsed.data);
+  }
+
+  if (name === 'todo_read') {
+    const parsed = TodoReadInputSchema.safeParse(args ?? {});
+    if (!parsed.success) {
+      return createToolResult(createValidationError(parsed.error.message, true));
+    }
+    return todoHandlers.todoRead(parsed.data);
+  }
+
+  if (name === 'todo_next') {
+    const parsed = TodoNextInputSchema.safeParse(args ?? {});
+    if (!parsed.success) {
+      return createToolResult(createValidationError(parsed.error.message, true));
+    }
+    return todoHandlers.todoNext(parsed.data);
+  }
+
+  if (name === 'todo_reset') {
+    const parsed = TodoResetInputSchema.safeParse(args ?? {});
+    if (!parsed.success) {
+      return createToolResult(createValidationError(parsed.error.message, true));
+    }
+    return todoHandlers.todoReset(parsed.data);
+  }
+
   return createToolResult(createValidationError(`Unknown tool: ${name}`, false));
 }
 
 async function handleRequest(
   request: JsonRpcRequest,
   targetDir: string,
-  saveDeliverable: ReturnType<typeof createSaveDeliverableHandler>
+  saveDeliverable: ReturnType<typeof createSaveDeliverableHandler>,
+  todoHandlers: ReturnType<typeof createTodoOrchestrationHandlers>
 ): Promise<void> {
   const id = request.id;
   const method = request.method;
@@ -274,7 +416,7 @@ async function handleRequest(
       ? rawArgs as Record<string, unknown>
       : undefined;
 
-    const result = await handleToolCall(toolName, toolArgs, saveDeliverable);
+    const result = await handleToolCall(toolName, toolArgs, saveDeliverable, todoHandlers);
     if (id === undefined) {
       return;
     }
@@ -300,6 +442,7 @@ async function handleRequest(
 async function startServer(): Promise<void> {
   const targetDir = resolveTargetDir(process.argv.slice(2));
   const saveDeliverable = createSaveDeliverableHandler(targetDir);
+  const todoHandlers = createTodoOrchestrationHandlers();
 
   let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
@@ -331,7 +474,7 @@ async function startServer(): Promise<void> {
         continue;
       }
 
-      void handleRequest(parsed, targetDir, saveDeliverable).catch((error) => {
+      void handleRequest(parsed, targetDir, saveDeliverable, todoHandlers).catch((error) => {
         process.stderr.write(`shannon-helper MCP request error: ${String(error)}\n`);
         respondError(parsed?.id, { code: -32603, message: 'Internal error' });
       });

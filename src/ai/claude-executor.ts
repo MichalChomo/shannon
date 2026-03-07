@@ -195,9 +195,10 @@ function buildCodexMcpConfigArgs(mcpServers: Record<string, CodexMcpServer>): st
 function buildCodexTodoShim(fullPrompt: string): string {
   const todoInstructions = [
     '<codex_todo_tools>',
-    'Codex CLI does not provide a native TodoWrite tool in this environment.',
-    'When instructions reference "TodoWrite", use these MCP tools instead:',
-    '- `todo_write`: write/replace the full todo list (`todos` array).',
+    'Codex CLI does not provide a native built-in TodoWrite tool in this environment.',
+    'When instructions reference "TodoWrite", use MCP tool `TodoWrite` (alias of `todo_write`).',
+    '- `todo_write`/`TodoWrite`: write/replace the full todo list (`todos` array, can be empty).',
+    'To append or update one task: call `todo_read`, modify the list, then call `todo_write` with the full list.',
     '- `todo_read`: read current todo list and progress summary.',
     '- `todo_next`: select the next task (and optionally mark in progress).',
     '- `todo_reset`: clear todo state when starting over.',

@@ -125,7 +125,6 @@ const TODO_WRITE_SCHEMA: Record<string, unknown> = {
   properties: {
     todos: {
       type: 'array',
-      minItems: 1,
       items: TODO_ITEM_SCHEMA,
       description: 'Full todo list state to persist for this run',
     },
@@ -180,6 +179,11 @@ const TOOLS: McpToolDefinition[] = [
   {
     name: 'todo_write',
     description: 'Replace the current todo/task list state (TodoWrite equivalent for Codex CLI).',
+    inputSchema: TODO_WRITE_SCHEMA,
+  },
+  {
+    name: 'TodoWrite',
+    description: 'Alias for todo_write for compatibility with prompts that explicitly reference TodoWrite.',
     inputSchema: TODO_WRITE_SCHEMA,
   },
   {
@@ -322,7 +326,7 @@ async function handleToolCall(
     return generateTotp(parsed.data);
   }
 
-  if (name === 'todo_write') {
+  if (name === 'todo_write' || name === 'TodoWrite') {
     const parsed = TodoWriteInputSchema.safeParse(args ?? {});
     if (!parsed.success) {
       return createToolResult(createValidationError(parsed.error.message, true));

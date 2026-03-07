@@ -41,8 +41,7 @@ const TodoInputItemSchema = z.object({
 
 export const TodoWriteInputSchema = z.object({
   todos: z.array(TodoInputItemSchema)
-    .min(1)
-    .describe('Full current todo list. This call replaces previous list state.'),
+    .describe('Full current todo list. This call replaces previous list state and may be empty.'),
 });
 
 export const TodoReadInputSchema = z.object({

@@ -267,10 +267,10 @@ cmd_start() {
   mkdir -p ./audit-logs ./credentials
   chmod 777 ./audit-logs
 
-  # Ensure repo deliverables directory is writable by container user (UID 1001)
+  # Ensure repo output directories are writable by container user (UID 1001)
   if [ -d "./repos/$REPO" ]; then
-    mkdir -p "./repos/$REPO/deliverables"
-    chmod 777 "./repos/$REPO/deliverables"
+    mkdir -p "./repos/$REPO/deliverables" "./repos/$REPO/outputs" "./repos/$REPO/outputs/schemas"
+    chmod 777 "./repos/$REPO/deliverables" "./repos/$REPO/outputs" "./repos/$REPO/outputs/schemas"
   fi
 
   # Ensure containers are running (starts them if needed)

@@ -7,9 +7,9 @@
 // Production Claude agent execution with retry, git checkpoints, and audit logging
 
 import { fs, path } from 'zx';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { Codex } from '@openai/codex-sdk';
 
 import { isRetryableError, PentestError } from '../services/error-handling.js';
 import { isSpendingCapBehavior } from '../utils/billing-detection.js';
@@ -161,36 +161,6 @@ function buildCodexMcpServers(sourceDir: string, agentName: string | null, logge
   return mcpServers;
 }
 
-function escapeTomlString(value: string): string {
-  return JSON.stringify(value);
-}
-
-function toTomlStringArray(values: readonly string[]): string {
-  return `[${values.map(escapeTomlString).join(',')}]`;
-}
-
-function formatTomlKey(key: string): string {
-  return /^[A-Za-z0-9_-]+$/.test(key) ? key : escapeTomlString(key);
-}
-
-function buildCodexMcpConfigArgs(mcpServers: Record<string, CodexMcpServer>): string[] {
-  const args: string[] = [];
-
-  for (const [serverName, server] of Object.entries(mcpServers)) {
-    const serverPrefix = `mcp_servers.${formatTomlKey(serverName)}`;
-    args.push('-c', `${serverPrefix}.enabled=true`);
-    args.push('-c', `${serverPrefix}.command=${escapeTomlString(server.command)}`);
-    args.push('-c', `${serverPrefix}.args=${toTomlStringArray(server.args)}`);
-
-    if (server.env) {
-      for (const [envName, envValue] of Object.entries(server.env)) {
-        args.push('-c', `${serverPrefix}.env.${formatTomlKey(envName)}=${escapeTomlString(envValue)}`);
-      }
-    }
-  }
-
-  return args;
-}
 
 function buildCodexTodoShim(fullPrompt: string): string {
   const todoInstructions = [
@@ -451,7 +421,7 @@ export async function runClaudePrompt(
   }
 }
 
-async function runCodexPrompt(
+export async function runCodexPrompt(
   fullPrompt: string,
   sourceDir: string,
   description: string,
@@ -470,7 +440,7 @@ async function runCodexPrompt(
   let apiErrorDetected = false;
   const totalCost = 0;
 
-  logger.info(`Running Codex CLI: ${description}...`);
+  logger.info(`Running Codex SDK: ${description}...`);
   progress.start();
 
   try {
@@ -479,75 +449,89 @@ async function runCodexPrompt(
     await prepareCodexAuth(logger);
 
     // 2. Configure Codex MCP servers to match Claude wiring.
-    const codexMcpServers = buildCodexMcpServers(sourceDir, agentName, logger);
-    const helperServerPath = codexMcpServers['shannon-helper']?.args[0];
-    if (!helperServerPath || !(await fs.pathExists(helperServerPath))) {
-      throw new Error(
-        `Codex MCP helper not found at ${helperServerPath ?? '<unknown>'}. Build mcp-server before running Codex mode.`
-      );
+    const mcpServers = buildCodexMcpServers(sourceDir, agentName, logger);
+    const mcpConfig: Record<string, any> = {};
+    for (const [name, server] of Object.entries(mcpServers)) {
+      mcpConfig[name] = {
+        enabled: true,
+        command: server.command,
+        args: server.args,
+        env: server.env,
+      };
     }
 
-    const codexMcpConfigArgs = buildCodexMcpConfigArgs(codexMcpServers);
-    logger.info(`Codex MCP: ${Object.keys(codexMcpServers).join(', ')}`);
+    // 3. Initialize Codex SDK and process the message stream
+    const codex = new Codex({
+      config: { mcp_servers: mcpConfig },
+      env: Object.fromEntries(
+        Object.entries({ ...process.env, CODEX_HOME: codexHome })
+          .filter(([, v]) => v !== undefined)
+      ) as Record<string, string>,
+    });
 
-    // 3. Execute codex in non-interactive mode and capture the final answer.
-    const outputFile = path.join(
-      '/tmp',
-      `codex-last-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`
-    );
-    const codexResult = await executeCodexExec(
-      [
-        'exec',
-        '--json',
-        '--skip-git-repo-check',
-        '--dangerously-bypass-approvals-and-sandbox',
-        '--model',
-        model,
-        '--cd',
-        sourceDir,
-        ...codexMcpConfigArgs,
-        '--output-last-message',
-        outputFile,
-        '-',
-      ],
-      codexPrompt,
-      {
-        ...process.env,
-        CODEX_HOME: codexHome,
+    const thread = codex.startThread({
+      model,
+      workingDirectory: sourceDir,
+      skipGitRepoCheck: true,
+      sandboxMode: 'danger-full-access',
+      approvalPolicy: 'never',
+    });
+
+    const deps: MessageLoopDeps = { execContext, description, progress, auditLogger, logger };
+    const { events } = await thread.runStreamed(codexPrompt);
+
+    let finalResponse = '';
+
+    for await (const event of events) {
+      if (event.type === 'turn.started') {
+        turnCount++;
       }
-    );
 
-    turnCount = codexResult.turnCount;
-    apiErrorDetected = codexResult.apiErrorDetected;
-
-    if (codexResult.exitCode !== 0) {
-      const failureMessage = codexResult.lastError || codexResult.stderr || 'Codex CLI execution failed';
-      throw new Error(failureMessage);
+      if (event.type === 'item.started') {
+        if (event.item.type === 'mcp_tool_call') {
+          await dispatchMessage(
+            { type: 'tool_use', name: event.item.tool, input: event.item.arguments as any } as any,
+            turnCount,
+            deps
+          );
+        }
+      } else if (event.type === 'item.completed') {
+        if (event.item.type === 'mcp_tool_call') {
+          const toolResult = event.item.result;
+          await dispatchMessage(
+            { type: 'tool_result', content: toolResult?.content } as any,
+            turnCount,
+            deps
+          );
+        } else if (event.item.type === 'agent_message') {
+          finalResponse = event.item.text;
+          const dispatchResult = await dispatchMessage(
+            { type: 'assistant', message: { content: finalResponse } } as any,
+            turnCount,
+            deps
+          );
+          if (dispatchResult.type === 'throw') {
+            throw dispatchResult.error;
+          }
+        }
+      } else if (event.type === 'turn.failed') {
+        throw new Error(event.error.message);
+      } else if (event.type === 'error') {
+        apiErrorDetected = true;
+        logger.warn(`Codex API error: ${event.message}`);
+      }
     }
 
-    let result = '';
-    try {
-      result = (await fs.readFile(outputFile, 'utf8')).trim();
-    } finally {
-      await fs.remove(outputFile).catch(() => undefined);
+    if (!finalResponse) {
+      throw new Error('Codex SDK finished without a final assistant message');
     }
-
-    if (!result) {
-      throw new Error('Codex CLI finished without a final assistant message');
-    }
-
-    await auditLogger.logLlmResponse(Math.max(turnCount, 1), result);
 
     // 4. Finalize successful result.
     const duration = timer.stop();
     progress.finish(formatCompletionMessage(execContext, description, Math.max(turnCount, 1), duration));
 
-    if (apiErrorDetected) {
-      logger.warn(`API Error detected in ${description} - will validate deliverables before failing`);
-    }
-
     return {
-      result,
+      result: finalResponse,
       success: true,
       duration,
       turns: Math.max(turnCount, 1),
@@ -578,110 +562,12 @@ async function runCodexPrompt(
   }
 }
 
-async function executeCodexExec(
-  args: string[],
-  prompt: string,
-  env: NodeJS.ProcessEnv
-): Promise<CodexExecResult> {
-  return new Promise((resolve) => {
-    const child = spawn('codex', args, {
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-
-    let stderr = '';
-    let stdoutBuffer = '';
-    let turnCount = 0;
-    let apiErrorDetected = false;
-    let lastError: string | null = null;
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString();
-
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() ?? '';
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line || !line.startsWith('{')) {
-          continue;
-        }
-
-        try {
-          const event = JSON.parse(line) as {
-            type?: string;
-            message?: string;
-            error?: { message?: string };
-            item?: { type?: string; message?: string };
-          };
-
-          if (event.type === 'turn.completed') {
-            turnCount++;
-          }
-
-          if (event.type === 'error') {
-            apiErrorDetected = true;
-            lastError = event.message ?? lastError;
-          }
-
-          if (event.type === 'item.completed' && event.item?.type === 'error') {
-            apiErrorDetected = true;
-            lastError = event.item.message ?? lastError;
-          }
-
-          if (event.type === 'turn.failed') {
-            apiErrorDetected = true;
-            lastError = event.error?.message ?? lastError;
-          }
-        } catch {
-          // Ignore malformed lines in Codex JSONL stream.
-        }
-      }
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', (error) => {
-      resolve({
-        exitCode: 1,
-        stderr: error.message,
-        turnCount,
-        apiErrorDetected: true,
-        lastError: error.message,
-      });
-    });
-
-    child.on('close', (code) => {
-      resolve({
-        exitCode: code ?? 1,
-        stderr: stderr.trim(),
-        turnCount,
-        apiErrorDetected,
-        lastError,
-      });
-    });
-
-    child.stdin.write(prompt);
-    child.stdin.end();
-  });
-}
-
-
 interface MessageLoopResult {
   turnCount: number;
   result: string | null;
   apiErrorDetected: boolean;
   cost: number;
   model?: string | undefined;
-}
-
-interface CodexExecResult {
-  exitCode: number;
-  stderr: string;
-  turnCount: number;
-  apiErrorDetected: boolean;
-  lastError: string | null;
 }
 
 interface MessageLoopDeps {

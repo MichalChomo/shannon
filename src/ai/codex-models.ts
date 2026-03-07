@@ -7,9 +7,9 @@
 import type { ModelTier } from './models.js';
 
 const DEFAULT_CODEX_MODELS: Readonly<Record<ModelTier, string>> = {
-  small: 'gpt-5-mini',
-  medium: 'gpt-5',
-  large: 'gpt-5',
+  small: 'gpt-5.1-codex-mini',
+  medium: 'gpt-5.3-codex',
+  large: 'gpt-5.4',
 };
 
 export function resolveCodexModel(tier: ModelTier = 'medium'): string {

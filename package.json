@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.38",
-    "@openai/codex-sdk": "file:./codexreposymlink/sdk/typescript",
+    "@openai/codex-sdk": "0.111.0",
     "@temporalio/activity": "^1.11.0",
     "@temporalio/client": "^1.11.0",
     "@temporalio/worker": "^1.11.0",

@@ -40,6 +40,9 @@ export enum DeliverableType {
   AUTH_EVIDENCE = 'AUTH_EVIDENCE',
   AUTHZ_EVIDENCE = 'AUTHZ_EVIDENCE',
   SSRF_EVIDENCE = 'SSRF_EVIDENCE',
+
+  // Reporting agent
+  REPORT = 'REPORT',
 }
 
 /**
@@ -64,6 +67,7 @@ export const DELIVERABLE_FILENAMES: Record<DeliverableType, string> = {
   [DeliverableType.AUTH_EVIDENCE]: 'auth_exploitation_evidence.md',
   [DeliverableType.AUTHZ_EVIDENCE]: 'authz_exploitation_evidence.md',
   [DeliverableType.SSRF_EVIDENCE]: 'ssrf_exploitation_evidence.md',
+  [DeliverableType.REPORT]: 'comprehensive_security_assessment_report.md',
 };
 
 /**

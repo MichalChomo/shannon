@@ -8,7 +8,6 @@ import * as progressManager from './progress-manager.js';
 import * as auditLogger from './audit-logger.js';
 import * as outputFormatters from './output-formatters.js';
 import * as models from './models.js';
-import { Timer } from '../utils/metrics.js';
 
 vi.mock('zx', () => ({
   fs: {

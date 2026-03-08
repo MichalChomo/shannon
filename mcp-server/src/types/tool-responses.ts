@@ -101,13 +101,14 @@ export type ToolResponse =
   | TodoResetResponse;
 
 export interface ToolResultContent {
-  type: string;
+  type: 'text';
   text: string;
 }
 
 export interface ToolResult {
   content: ToolResultContent[];
   isError: boolean;
+  [key: string]: unknown;
 }
 
 /**
